@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>내 위치 찾기</title>
+    <style>
+      :root {
+        --bg1: #f6f8ff;
+        --bg2: #e9fff5;
+        --card: #ffffff;
+        --text: #18222f;
+        --muted: #5c6672;
+        --primary: #0e7c66;
+        --primary-hover: #0b6654;
+        --error: #b42318;
+        --ok: #067647;
+        --shadow: 0 12px 32px rgba(16, 24, 40, 0.12);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Pretendard", "Noto Sans KR", "Apple SD Gothic Neo", sans-serif;
+        color: var(--text);
+        background: radial-gradient(circle at 15% 20%, var(--bg2), transparent 40%),
+          radial-gradient(circle at 90% 10%, #fef9e6, transparent 45%),
+          var(--bg1);
+        display: grid;
+        place-items: center;
+        padding: 20px;
+      }
+
+      .card {
+        width: min(700px, 100%);
+        background: var(--card);
+        border-radius: 20px;
+        box-shadow: var(--shadow);
+        padding: 28px;
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: clamp(1.4rem, 2.4vw, 2rem);
+      }
+
+      p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      .actions {
+        margin-top: 20px;
+      }
+
+      button {
+        border: 0;
+        border-radius: 12px;
+        background: var(--primary);
+        color: #fff;
+        font-size: 1rem;
+        font-weight: 600;
+        padding: 12px 16px;
+        cursor: pointer;
+        transition: background 0.2s ease;
+      }
+
+      button:hover {
+        background: var(--primary-hover);
+      }
+
+      button:disabled {
+        opacity: 0.7;
+        cursor: wait;
+      }
+
+      .status {
+        margin-top: 16px;
+        font-weight: 600;
+      }
+
+      .status.ok {
+        color: var(--ok);
+      }
+
+      .status.error {
+        color: var(--error);
+      }
+
+      .result {
+        margin-top: 14px;
+        background: #f8fafc;
+        border: 1px solid #e4e7ec;
+        border-radius: 14px;
+        padding: 14px;
+        display: none;
+      }
+
+      .result.visible {
+        display: block;
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: 120px 1fr;
+        gap: 8px;
+        font-size: 0.95rem;
+        margin-bottom: 6px;
+      }
+
+      .row:last-child {
+        margin-bottom: 0;
+      }
+
+      .label {
+        color: #344054;
+        font-weight: 600;
+      }
+
+      .value {
+        color: #101828;
+        word-break: break-word;
+      }
+
+      a {
+        color: #175cd3;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <h1>내 위치 가져오기</h1>
+      <p>
+        아래 버튼을 누르면 브라우저가 휴대전화 위치 정보를 요청합니다.
+        <strong>HTTPS(또는 localhost)</strong>에서만 정상 동작합니다.
+      </p>
+
+      <div class="actions">
+        <button id="locateBtn" type="button">현재 위치 가져오기</button>
+      </div>
+
+      <div id="status" class="status" aria-live="polite"></div>
+
+      <section id="result" class="result" aria-live="polite">
+        <div class="row">
+          <div class="label">위치 타이틀</div>
+          <div id="placeTitle" class="value">-</div>
+        </div>
+        <div class="row">
+          <div class="label">위도</div>
+          <div id="latitude" class="value">-</div>
+        </div>
+        <div class="row">
+          <div class="label">경도</div>
+          <div id="longitude" class="value">-</div>
+        </div>
+        <div class="row">
+          <div class="label">정확도</div>
+          <div id="accuracy" class="value">-</div>
+        </div>
+        <div class="row">
+          <div class="label">측정 시각</div>
+          <div id="timestamp" class="value">-</div>
+        </div>
+        <div class="row">
+          <div class="label">지도 링크</div>
+          <div id="mapLink" class="value">-</div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const locateBtn = document.getElementById("locateBtn");
+      const statusEl = document.getElementById("status");
+      const resultEl = document.getElementById("result");
+
+      const latitudeEl = document.getElementById("latitude");
+      const longitudeEl = document.getElementById("longitude");
+      const accuracyEl = document.getElementById("accuracy");
+      const timestampEl = document.getElementById("timestamp");
+      const mapLinkEl = document.getElementById("mapLink");
+      const placeTitleEl = document.getElementById("placeTitle");
+
+      function setStatus(message, type) {
+        statusEl.textContent = message;
+        statusEl.className = "status" + (type ? " " + type : "");
+      }
+
+      async function fetchAddressTitle(latitude, longitude) {
+        const endpoint =
+          `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(latitude)}` +
+          `&lon=${encodeURIComponent(longitude)}&accept-language=ko`;
+
+        const response = await fetch(endpoint, {
+          headers: {
+            Accept: "application/json",
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error("reverse-geocoding-failed");
+        }
+
+        const data = await response.json();
+        return data.name || data.display_name || "위치명 정보를 찾지 못했습니다.";
+      }
+
+      async function showResult(position) {
+        const { latitude, longitude, accuracy } = position.coords;
+        const timestamp = new Date(position.timestamp);
+
+        latitudeEl.textContent = latitude.toFixed(6);
+        longitudeEl.textContent = longitude.toFixed(6);
+        accuracyEl.textContent = `약 ${Math.round(accuracy)}m`;
+        timestampEl.textContent = timestamp.toLocaleString("ko-KR");
+
+        const mapUrl = `https://www.google.com/maps?q=${latitude},${longitude}`;
+        mapLinkEl.innerHTML = `<a href="${mapUrl}" target="_blank" rel="noopener noreferrer">Google 지도에서 열기</a>`;
+
+        placeTitleEl.textContent = "위치 타이틀 확인 중...";
+        try {
+          const placeTitle = await fetchAddressTitle(latitude, longitude);
+          placeTitleEl.textContent = placeTitle;
+        } catch {
+          placeTitleEl.textContent = "위치 타이틀을 가져오지 못했습니다.";
+        }
+
+        resultEl.classList.add("visible");
+      }
+
+      function showError(error) {
+        let message = "위치를 가져오지 못했습니다.";
+
+        if (error.code === error.PERMISSION_DENIED) {
+          message = "위치 권한이 거부되었습니다. 브라우저 설정에서 위치 권한을 허용해 주세요.";
+        } else if (error.code === error.POSITION_UNAVAILABLE) {
+          message = "위치 정보를 사용할 수 없습니다. GPS/네트워크 상태를 확인해 주세요.";
+        } else if (error.code === error.TIMEOUT) {
+          message = "위치 요청 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.";
+        }
+
+        setStatus(message, "error");
+      }
+
+      locateBtn.addEventListener("click", () => {
+        resultEl.classList.remove("visible");
+
+        if (!window.isSecureContext && location.hostname !== "localhost") {
+          setStatus("이 기능은 HTTPS 환경에서만 동작합니다.", "error");
+          return;
+        }
+
+        if (!navigator.geolocation) {
+          setStatus("이 브라우저는 Geolocation API를 지원하지 않습니다.", "error");
+          return;
+        }
+
+        locateBtn.disabled = true;
+        setStatus("현재 위치를 확인하는 중입니다...", "");
+
+        navigator.geolocation.getCurrentPosition(
+          async (position) => {
+            await showResult(position);
+            setStatus("좌표와 위치 타이틀을 가져왔습니다.", "ok");
+            locateBtn.disabled = false;
+          },
+          (error) => {
+            showError(error);
+            locateBtn.disabled = false;
+          },
+          {
+            enableHighAccuracy: true,
+            timeout: 12000,
+            maximumAge: 0,
+          }
+        );
+      });
+    </script>
+  </body>
+</html>
