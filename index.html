@@ -288,6 +288,7 @@
       const copyBtn = document.getElementById("copyBtn");
       const clearBtn = document.getElementById("clearBtn");
       const copyToast = document.getElementById("copyToast");
+      const recordedLocationKeys = new Set();
 
       function setStatus(message, type) {
         statusEl.textContent = message;
@@ -326,19 +327,26 @@
         mapLinkEl.innerHTML = `<a href="${mapUrl}" target="_blank" rel="noopener noreferrer">Google 지도에서 열기</a>`;
 
         placeTitleEl.textContent = "위치 타이틀 확인 중...";
+        let wasRecorded = false;
         try {
           const placeTitle = await fetchAddressTitle(latitude, longitude);
           placeTitleEl.textContent = placeTitle;
-          addToHistory(latitude, longitude, accuracy, timestamp, placeTitle);
+          wasRecorded = addToHistory(latitude, longitude, accuracy, timestamp, placeTitle);
         } catch {
           placeTitleEl.textContent = "위치 타이틀을 가져오지 못했습니다.";
-          addToHistory(latitude, longitude, accuracy, timestamp, "(위치명 조회 실패)");
+          wasRecorded = addToHistory(latitude, longitude, accuracy, timestamp, "(위치명 조회 실패)");
         }
 
         resultEl.classList.add("visible");
+        return wasRecorded;
       }
 
       function addToHistory(latitude, longitude, accuracy, timestamp, placeTitle) {
+        const locationKey = `${latitude.toFixed(6)},${longitude.toFixed(6)}`;
+        if (recordedLocationKeys.has(locationKey)) {
+          return false;
+        }
+
         const timeStr = timestamp.toLocaleString("ko-KR");
         const label = `[${timeStr}] ${placeTitle} | ${latitude.toFixed(6)}, ${longitude.toFixed(6)} | 정확도 약 ${Math.round(accuracy)}m`;
         const value = `${timeStr}\t${placeTitle}\t${latitude.toFixed(6)}\t${longitude.toFixed(6)}\t약 ${Math.round(accuracy)}m`;
@@ -352,6 +360,9 @@
         historyCount.textContent = `(${count}건)`;
         copyBtn.disabled = false;
         clearBtn.disabled = false;
+        recordedLocationKeys.add(locationKey);
+
+        return true;
       }
 
       copyBtn.addEventListener("click", () => {
@@ -370,6 +381,7 @@
         historyCount.textContent = "(0건)";
         copyBtn.disabled = true;
         clearBtn.disabled = true;
+        recordedLocationKeys.clear();
       });
 
       function vibrateOnError() {
@@ -393,6 +405,103 @@
         vibrateOnError();
       }
 
+      function wait(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+      }
+
+      function isRetryableGeolocationError(error) {
+        return error.code === error.POSITION_UNAVAILABLE || error.code === error.TIMEOUT;
+      }
+
+      function getCurrentPositionWithPromise() {
+        return new Promise((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: true,
+            timeout: 12000,
+            maximumAge: 0,
+          });
+        });
+      }
+
+      async function collectLocationWithRetry(round, totalRounds) {
+        setStatus(`${round}/${totalRounds}회차 위치 확인 중...`, "");
+
+        try {
+          const position = await getCurrentPositionWithPromise();
+          const wasRecorded = await showResult(position);
+          return {
+            success: true,
+            wasRecorded,
+            retried: false,
+          };
+        } catch (error) {
+          if (!isRetryableGeolocationError(error)) {
+            showError(error);
+            return {
+              success: false,
+              wasRecorded: false,
+              retried: false,
+            };
+          }
+
+          setStatus(`${round}/${totalRounds}회차 통신 오류로 재시도 중...`, "error");
+
+          try {
+            const retryPosition = await getCurrentPositionWithPromise();
+            const wasRecorded = await showResult(retryPosition);
+            return {
+              success: true,
+              wasRecorded,
+              retried: true,
+            };
+          } catch (retryError) {
+            showError(retryError);
+            return {
+              success: false,
+              wasRecorded: false,
+              retried: true,
+            };
+          }
+        }
+      }
+
+      async function startScheduledCollection() {
+        const totalRounds = 5;
+        const waitBetweenRoundsMs = 30000;
+        let successCount = 0;
+        let recordedCount = 0;
+        let duplicateSkipCount = 0;
+
+        locateBtn.disabled = true;
+
+        for (let round = 1; round <= totalRounds; round += 1) {
+          const result = await collectLocationWithRetry(round, totalRounds);
+
+          if (result.success) {
+            successCount += 1;
+            if (result.wasRecorded) {
+              recordedCount += 1;
+            } else {
+              duplicateSkipCount += 1;
+            }
+          }
+
+          if (round < totalRounds) {
+            setStatus(
+              `${round}/${totalRounds}회차 완료. ${Math.round(waitBetweenRoundsMs / 1000)}초 후 다음 측정을 시작합니다.`,
+              ""
+            );
+            await wait(waitBetweenRoundsMs);
+          }
+        }
+
+        locateBtn.disabled = false;
+        setStatus(
+          `수집 완료: 성공 ${successCount}/${totalRounds}회, 신규 기록 ${recordedCount}건, 중복 제외 ${duplicateSkipCount}건`,
+          successCount > 0 ? "ok" : "error"
+        );
+      }
+
       locateBtn.addEventListener("click", () => {
         resultEl.classList.remove("visible");
 
@@ -406,25 +515,7 @@
           return;
         }
 
-        locateBtn.disabled = true;
-        setStatus("현재 위치를 확인하는 중입니다...", "");
-
-        navigator.geolocation.getCurrentPosition(
-          async (position) => {
-            await showResult(position);
-            setStatus("좌표와 위치 타이틀을 가져왔습니다.", "ok");
-            locateBtn.disabled = false;
-          },
-          (error) => {
-            showError(error);
-            locateBtn.disabled = false;
-          },
-          {
-            enableHighAccuracy: true,
-            timeout: 12000,
-            maximumAge: 0,
-          }
-        );
+        startScheduledCollection();
       });
     </script>
   </body>
