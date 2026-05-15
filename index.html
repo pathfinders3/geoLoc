@@ -372,6 +372,12 @@
         clearBtn.disabled = true;
       });
 
+      function vibrateOnError() {
+        if ("vibrate" in navigator) {
+          navigator.vibrate([200, 100, 200]);
+        }
+      }
+
       function showError(error) {
         let message = "위치를 가져오지 못했습니다.";
 
@@ -384,6 +390,7 @@
         }
 
         setStatus(message, "error");
+        vibrateOnError();
       }
 
       locateBtn.addEventListener("click", () => {
